@@ -1,3 +1,5 @@
+// Ayman Tayeb and Austin Conway
+
 #include <stdlib.h>
 #include <math.h>
 #include "vector.h"

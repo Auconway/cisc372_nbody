@@ -1,3 +1,5 @@
+// Ayman Tayeb and Austin Conway
+
 #ifndef __PLANETS_H__
 #define __PLANETS_H__
 #define SUN {0.0,0.0,0.0,        0.0,0.0,0.0,      1.989e30 }

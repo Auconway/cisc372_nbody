@@ -1,3 +1,5 @@
+// Ayman Tayeb and Austin Conway
+
 #ifndef __TYPES_H__
 #define __TYPES_H__
 
