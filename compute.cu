@@ -67,7 +67,7 @@ void compute() {
     size_t size_mass = NUMENTITIES * sizeof(double);
     cudaError_t err;
 
-    // 1. Allocate memory on the GPU
+    //Allocate memory on the GPU
     err = cudaMalloc((void**)&dev_pos, size_vec);
     if(err != cudaSuccess) { fprintf(stderr, "Cuda Malloc Error (Pos): %s\n", cudaGetErrorString(err)); exit(1); }
     
