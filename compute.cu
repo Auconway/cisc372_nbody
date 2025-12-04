@@ -1,95 +1,138 @@
 //Ayman Tayeb and Austin Conway
+
 #include <stdlib.h>
-#include <stdio.h>
 #include <math.h>
-#include <cuda_runtime.h>
 #include "vector.h"
 #include "config.h"
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include "config.h"
+
+
+/*
+void compute(){
+	//make an acceleration matrix which is NUMENTITIES squared in size;
+	int i,j,k;
+	vector3* values=(vector3*)malloc(sizeof(vector3)*NUMENTITIES*NUMENTITIES);
+	vector3** accels=(vector3**)malloc(sizeof(vector3*)*NUMENTITIES);
+	for (i=0;i<NUMENTITIES;i++)
+		accels[i]=&values[i*NUMENTITIES];
+	//first compute the pairwise accelerations.  Effect is on the first argument.
+	for (i=0;i<NUMENTITIES;i++){
+		for (j=0;j<NUMENTITIES;j++){
+			if (i==j) {
+				FILL_VECTOR(accels[i][j],0,0,0);
+			}
+			else{
+				vector3 distance;
+				for (k=0;k<3;k++) distance[k]=hPos[i][k]-hPos[j][k];
+				double magnitude_sq=distance[0]*distance[0]+distance[1]*distance[1]+distance[2]*distance[2];
+				double magnitude=sqrt(magnitude_sq);
+				double accelmag=-1*GRAV_CONSTANT*mass[j]/magnitude_sq;
+				FILL_VECTOR(accels[i][j],accelmag*distance[0]/magnitude,accelmag*distance[1]/magnitude,accelmag*distance[2]/magnitude);
+			}
+		}
+	}
+
+*/
 
 __global__ void nbody_kernel(vector3* d_pos, vector3* d_vel, double* d_mass, int numEntities) {
     
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numEntities) {
+        return;
+    }
 
-    if (i >= numEntities) return;
+    double pos_x = d_pos[i][0];
+    double pos_y = d_pos[i][1];
+    double pos_z = d_pos[i][2];
 
-    double pi_x = d_pos[i][0];
-    double pi_y = d_pos[i][1];
-    double pi_z = d_pos[i][2];
+    double vel_x = d_vel[i][0];
+    double vel_y = d_vel[i][1];
+    double vel_z = d_vel[i][2];
 
-    double vi_x = d_vel[i][0];
-    double vi_y = d_vel[i][1];
-    double vi_z = d_vel[i][2];
-
-    double accel_sum_x = 0.0;
-    double accel_sum_y = 0.0;
-    double accel_sum_z = 0.0;
+    double accel_x_sum = 0.0;
+    double accel_y_sum = 0.0;
+    double accel_z_sum = 0.0;
 
     for (int j = 0; j < numEntities; j++) {
-        if (i == j) continue;
+        if (i == j) {
+            continue;
+        }
 
-        double dx = pi_x - d_pos[j][0];
-        double dy = pi_y - d_pos[j][1];
-        double dz = pi_z - d_pos[j][2];
+        double delta_x = pos_x - d_pos[j][0];
+        double delta_y = pos_y - d_pos[j][1];
+        double delta_z = pos_z - d_pos[j][2];
 
-        double magnitude_sq = dx*dx + dy*dy + dz*dz;
-        double magnitude = sqrt(magnitude_sq);
+        double distance_squared = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+        double distance = sqrt(distance_squared);
         
-        if (magnitude_sq > 1e-10) {
-            double accelmag = -1.0 * GRAV_CONSTANT * d_mass[j] / magnitude_sq;
+        if (distance_squared > 1e-10) {
+            double acceleration_magnitude = -1.0 * GRAV_CONSTANT * d_mass[j] / distance_squared;
             
-            accel_sum_x += accelmag * dx / magnitude;
-            accel_sum_y += accelmag * dy / magnitude;
-            accel_sum_z += accelmag * dz / magnitude;
+            accel_x_sum += acceleration_magnitude * delta_x / distance;
+            accel_y_sum += acceleration_magnitude * delta_y / distance;
+            accel_z_sum += acceleration_magnitude * delta_z / distance;
         }
     }
 
-    vi_x += accel_sum_x * INTERVAL;
-    vi_y += accel_sum_y * INTERVAL;
-    vi_z += accel_sum_z * INTERVAL;
+    vel_x += accel_x_sum * INTERVAL;
+    vel_y += accel_y_sum * INTERVAL;
+    vel_z += accel_z_sum * INTERVAL;
 
-    pi_x += vi_x * INTERVAL;
-    pi_y += vi_y * INTERVAL;
-    pi_z += vi_z * INTERVAL;
+    pos_x += vel_x * INTERVAL;
+    pos_y += vel_y * INTERVAL;
+    pos_z += vel_z * INTERVAL;
 
-    d_vel[i][0] = vi_x;
-    d_vel[i][1] = vi_y;
-    d_vel[i][2] = vi_z;
+    d_vel[i][0] = vel_x;
+    d_vel[i][1] = vel_y;
+    d_vel[i][2] = vel_z;
 
-    d_pos[i][0] = pi_x;
-    d_pos[i][1] = pi_y;
-    d_pos[i][2] = pi_z;
+    d_pos[i][0] = pos_x;
+    d_pos[i][1] = pos_y;
+    d_pos[i][2] = pos_z;
 }
 
 void compute() {
     vector3 *dev_pos, *dev_vel;
     double *dev_mass;
+    double *device_mass;
+    size_t vector_size = NUMENTITIES * sizeof(vector3);
+    size_t mass_size = NUMENTITIES * sizeof(double);
     size_t size_vec = NUMENTITIES * sizeof(vector3);
     size_t size_mass = NUMENTITIES * sizeof(double);
     cudaError_t err;
 
-    //Allocate memory on the GPU
+    // this will allocate memory on the GPU
     err = cudaMalloc((void**)&dev_pos, size_vec);
-    if(err != cudaSuccess) { fprintf(stderr, "Cuda Malloc Error (Pos): %s\n", cudaGetErrorString(err)); exit(1); }
-    
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Error: Unable to allocate GPU memory for positions (dev_pos): %s\n", cudaGetErrorString(err));
+        exit(1);
+    }
     err = cudaMalloc((void**)&dev_vel, size_vec);
-    if(err != cudaSuccess) { fprintf(stderr, "Cuda Malloc Error (Vel): %s\n", cudaGetErrorString(err)); exit(1); }
-    
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Error: Unable to allocate GPU memory for velocities (dev_vel): %s\n", cudaGetErrorString(err));
+        exit(1);
+    }
     err = cudaMalloc((void**)&dev_mass, size_mass);
-    if(err != cudaSuccess) { fprintf(stderr, "Cuda Malloc Error (Mass): %s\n", cudaGetErrorString(err)); exit(1); }
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Error: Unable to allocate GPU memory for masses (dev_mass): %s\n", cudaGetErrorString(err));
+        exit(1);
+    }
 
     cudaMemcpy(dev_pos, hPos, size_vec, cudaMemcpyHostToDevice);
     cudaMemcpy(dev_vel, hVel, size_vec, cudaMemcpyHostToDevice);
     cudaMemcpy(dev_mass, mass, size_mass, cudaMemcpyHostToDevice);
 
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (NUMENTITIES + threadsPerBlock - 1) / threadsPerBlock;
+    int threads_per_block = 256;
+    int blocks_per_grid = (NUMENTITIES + threads_per_block - 1) / threads_per_block;
 
-    nbody_kernel<<<blocksPerGrid, threadsPerBlock>>>(dev_pos, dev_vel, dev_mass, NUMENTITIES);
+    nbody_kernel<<<blocks_per_grid, threads_per_block>>>(dev_pos, dev_vel, dev_mass, NUMENTITIES);
     
-    // Check for launch errors
+    // we are checking for launch errors
     err = cudaGetLastError();
     if (err != cudaSuccess) {
-        fprintf(stderr, "Kernel Launch Error: %s\n", cudaGetErrorString(err));
+        fprintf(stderr, "Error: Kernel launch failed: %s\n", cudaGetErrorString(err));
         exit(1);
     }
     
